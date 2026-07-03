@@ -20,6 +20,7 @@ const WORKER_URL = `${FFMPEG_BASE}/814.ffmpeg.js`;
 const VIDEO_EXT = /\.(mp4|mov|m4v|avi|mkv|webm|wmv|flv|mpe?g|3gp)$/i;
 
 let files = [];        // videos in merge order
+let cover = null;       // optional cover image File shown at the start
 let ffmpeg = null;     // lazily created FFmpeg instance
 let logBuffer = [];     // captured ffmpeg log lines for the current command
 
@@ -31,6 +32,11 @@ const clearBtn = document.getElementById("clear-btn");
 const statusEl = document.getElementById("status");
 const progressWrap = document.getElementById("progress-wrap");
 const progressBar = document.getElementById("progress-bar");
+const coverInput = document.getElementById("cover-input");
+const coverBtn = document.getElementById("cover-btn");
+const coverNameEl = document.getElementById("cover-name");
+const coverRemoveBtn = document.getElementById("cover-remove");
+const coverDurInput = document.getElementById("cover-dur");
 
 // --- Helpers ---------------------------------------------------------------
 
@@ -134,6 +140,47 @@ dropzone.addEventListener("drop", (e) => {
 
 clearBtn.addEventListener("click", () => { files = []; render(); setStatus(""); });
 
+// --- Cover image (optional intro) ------------------------------------------
+
+coverBtn.addEventListener("click", () => coverInput.click());
+
+coverInput.addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  coverInput.value = "";
+  if (!file) return;
+  const isImage =
+    (file.type && file.type.startsWith("image/")) ||
+    /\.(jpe?g|png|webp|bmp|gif)$/i.test(file.name);
+  if (!isImage) {
+    setStatus("La copertina deve essere un'immagine (JPG, PNG…).", "error");
+    return;
+  }
+  cover = file;
+  renderCover();
+  setStatus("");
+});
+
+coverRemoveBtn.addEventListener("click", () => { cover = null; renderCover(); });
+
+function renderCover() {
+  if (cover) {
+    coverNameEl.textContent = cover.name;
+    coverRemoveBtn.hidden = false;
+    coverBtn.textContent = "🖼️ Cambia copertina";
+  } else {
+    coverNameEl.textContent = "";
+    coverRemoveBtn.hidden = true;
+    coverBtn.textContent = "🖼️ Aggiungi copertina";
+  }
+}
+
+// Read the chosen cover duration (seconds), clamped to a sensible range.
+function coverDuration() {
+  let d = parseFloat(coverDurInput.value);
+  if (!isFinite(d) || d <= 0) d = 3;
+  return Math.max(1, Math.min(60, d));
+}
+
 // --- FFmpeg (loaded lazily on first use) -----------------------------------
 
 async function ensureFFmpeg() {
@@ -208,40 +255,53 @@ async function tryFastConcat(infos, names, out) {
 }
 
 // Robust: normalise every clip to a common canvas and re-encode.
-async function reencodeConcat(infos, names, out) {
+// `cover` (optional) = { name, duration }: a still image shown at the start.
+async function reencodeConcat(infos, names, out, cover) {
   const canvasW = even(Math.max(...infos.map((i) => i.width)));
   const canvasH = even(Math.max(...infos.map((i) => i.height)));
   const fps = Math.round(Math.max(...infos.map((i) => i.fps))) || 30;
 
   const args = ["-y"];
-  names.forEach((n) => args.push("-i", n));
+  // Build the ordered list of segments (cover first, if any), each tracking
+  // the ffmpeg input index that provides its video.
+  const segments = [];
+  let inputIndex = 0;
 
-  // Add a finite silent-audio input for every clip without audio.
-  const silentIndex = {};
-  let nextIndex = names.length;
-  infos.forEach((info, idx) => {
-    if (!info.hasAudio) {
-      const dur = Math.max(info.duration, 0.1).toFixed(3);
+  if (cover) {
+    // A looped still image, capped to the chosen duration.
+    args.push("-loop", "1", "-t", cover.duration.toFixed(3), "-i", cover.name);
+    segments.push({ vIndex: inputIndex++, hasAudio: false, duration: cover.duration });
+  }
+  names.forEach((n, k) => {
+    args.push("-i", n);
+    segments.push({ vIndex: inputIndex++, hasAudio: infos[k].hasAudio, duration: infos[k].duration });
+  });
+
+  // Add a finite silent-audio input for every segment without audio.
+  segments.forEach((seg) => {
+    if (seg.hasAudio) {
+      seg.aIndex = seg.vIndex;
+    } else {
+      const dur = Math.max(seg.duration, 0.1).toFixed(3);
       args.push("-f", "lavfi", "-t", dur, "-i",
         "anullsrc=channel_layout=stereo:sample_rate=44100");
-      silentIndex[idx] = nextIndex++;
+      seg.aIndex = inputIndex++;
     }
   });
 
   const filters = [];
   const pads = [];
-  infos.forEach((info, idx) => {
+  segments.forEach((seg, idx) => {
     filters.push(
-      `[${idx}:v]scale=${canvasW}:${canvasH}:force_original_aspect_ratio=decrease,` +
+      `[${seg.vIndex}:v]scale=${canvasW}:${canvasH}:force_original_aspect_ratio=decrease,` +
       `pad=${canvasW}:${canvasH}:-1:-1:color=black,setsar=1,fps=${fps},format=yuv420p[v${idx}]`
     );
-    const aSrc = info.hasAudio ? idx : silentIndex[idx];
-    filters.push(`[${aSrc}:a]aformat=sample_rates=44100:channel_layouts=stereo[a${idx}]`);
+    filters.push(`[${seg.aIndex}:a]aformat=sample_rates=44100:channel_layouts=stereo[a${idx}]`);
     pads.push(`[v${idx}][a${idx}]`);
   });
 
   const filterComplex =
-    filters.join(";") + ";" + pads.join("") + `concat=n=${infos.length}:v=1:a=1[outv][outa]`;
+    filters.join(";") + ";" + pads.join("") + `concat=n=${segments.length}:v=1:a=1[outv][outa]`;
 
   args.push(
     "-filter_complex", filterComplex,
@@ -305,6 +365,7 @@ mergeBtn.addEventListener("click", async () => {
   mergeBtn.disabled = true;
   clearBtn.disabled = true;
   const names = files.map((f, i) => `in${i}.${extOf(f.name)}`);
+  let coverName = null;
 
   try {
     await ensureFFmpeg();
@@ -318,15 +379,22 @@ mergeBtn.addEventListener("click", async () => {
     for (let i = 0; i < files.length; i++) {
       await ffmpeg.writeFile(names[i], await fetchFile(files[i]));
     }
+    if (cover) {
+      coverName = `cover.${extOf(cover.name)}`;
+      await ffmpeg.writeFile(coverName, await fetchFile(cover));
+    }
 
     setStatus("Analisi dei video…", "busy");
     const infos = [];
     for (const n of names) infos.push(await probe(n));
 
     setStatus("Unione in corso… può richiedere qualche minuto.", "busy");
-    const fast = await tryFastConcat(infos, names, "out.mp4");
-    if (!fast) {
-      await reencodeConcat(infos, names, "out.mp4");
+    if (coverName) {
+      // With a cover we always re-encode (the image must be turned into video).
+      await reencodeConcat(infos, names, "out.mp4", { name: coverName, duration: coverDuration() });
+    } else {
+      const fast = await tryFastConcat(infos, names, "out.mp4");
+      if (!fast) await reencodeConcat(infos, names, "out.mp4", null);
     }
 
     const data = await ffmpeg.readFile("out.mp4");
@@ -338,7 +406,7 @@ mergeBtn.addEventListener("click", async () => {
     else if (result === "saved") setStatus("✓ Video salvato nella posizione scelta.", "success");
     else setStatus("✓ Video pronto: controlla la cartella Download.", "success");
 
-    await cleanupFS(names, ["out.mp4", "list.txt"]);
+    await cleanupFS(names, ["out.mp4", "list.txt", coverName].filter(Boolean));
   } catch (err) {
     console.error(err);
     setProgress(null);

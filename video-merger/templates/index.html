@@ -19,6 +19,14 @@
 
     <ul id="file-list" class="file-list" aria-live="polite"></ul>
 
+    <div class="cover-row">
+      <input type="file" id="cover-input" accept="image/*" hidden />
+      <button type="button" id="cover-btn" class="btn btn-secondary btn-cover">🖼️ Aggiungi copertina</button>
+      <span id="cover-name" class="cover-name"></span>
+      <button type="button" id="cover-remove" class="icon-btn" title="Rimuovi copertina" hidden>✕</button>
+      <label class="dur-label">Durata <input type="number" id="cover-dur" value="3" min="1" max="60" step="1" /> s</label>
+    </div>
+
     <div class="actions">
       <button type="button" id="clear-btn" class="btn btn-secondary" disabled>Svuota</button>
       <button type="button" id="merge-btn" class="btn btn-primary" disabled>Unisci e salva</button>

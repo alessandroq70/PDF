@@ -2,6 +2,7 @@
 
 // In-memory list of the videos the user has chosen, in merge order.
 let files = [];
+let cover = null; // optional cover image File shown at the start
 
 const VIDEO_EXT = /\.(mp4|mov|m4v|avi|mkv|webm|wmv|flv|mpe?g|3gp)$/i;
 
@@ -11,6 +12,11 @@ const fileListEl = document.getElementById("file-list");
 const mergeBtn = document.getElementById("merge-btn");
 const clearBtn = document.getElementById("clear-btn");
 const statusEl = document.getElementById("status");
+const coverInput = document.getElementById("cover-input");
+const coverBtn = document.getElementById("cover-btn");
+const coverNameEl = document.getElementById("cover-name");
+const coverRemoveBtn = document.getElementById("cover-remove");
+const coverDurInput = document.getElementById("cover-dur");
 
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -115,6 +121,46 @@ clearBtn.addEventListener("click", () => {
   setStatus("");
 });
 
+// --- Cover image (optional intro) ------------------------------------------
+
+coverBtn.addEventListener("click", () => coverInput.click());
+
+coverInput.addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  coverInput.value = "";
+  if (!file) return;
+  const isImage =
+    (file.type && file.type.startsWith("image/")) ||
+    /\.(jpe?g|png|webp|bmp|gif)$/i.test(file.name);
+  if (!isImage) {
+    setStatus("La copertina deve essere un'immagine (JPG, PNG…).", "error");
+    return;
+  }
+  cover = file;
+  renderCover();
+  setStatus("");
+});
+
+coverRemoveBtn.addEventListener("click", () => { cover = null; renderCover(); });
+
+function renderCover() {
+  if (cover) {
+    coverNameEl.textContent = cover.name;
+    coverRemoveBtn.hidden = false;
+    coverBtn.textContent = "🖼️ Cambia copertina";
+  } else {
+    coverNameEl.textContent = "";
+    coverRemoveBtn.hidden = true;
+    coverBtn.textContent = "🖼️ Aggiungi copertina";
+  }
+}
+
+function coverDuration() {
+  let d = parseFloat(coverDurInput.value);
+  if (!isFinite(d) || d <= 0) d = 3;
+  return Math.max(1, Math.min(60, d));
+}
+
 // --- Merge + save ----------------------------------------------------------
 
 async function saveBlob(blob) {
@@ -158,6 +204,10 @@ mergeBtn.addEventListener("click", async () => {
 
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file, file.name));
+  if (cover) {
+    formData.append("cover", cover, cover.name);
+    formData.append("cover_duration", String(coverDuration()));
+  }
 
   try {
     const res = await fetch("/merge", { method: "POST", body: formData });

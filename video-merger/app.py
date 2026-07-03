@@ -59,8 +59,22 @@ def merge():
             upload.save(dest)  # streams to disk, no full in-memory copy
             input_paths.append(dest)
 
+        # Optional cover image shown at the start.
+        cover_path = None
+        cover_upload = request.files.get("cover")
+        if cover_upload and cover_upload.filename:
+            safe = secure_filename(cover_upload.filename) or "cover.jpg"
+            cover_path = os.path.join(tmpdir, f"cover_{safe}")
+            cover_upload.save(cover_path)
+        try:
+            cover_duration = float(request.form.get("cover_duration", 3))
+        except (TypeError, ValueError):
+            cover_duration = 3.0
+        cover_duration = max(1.0, min(60.0, cover_duration))
+
         output_path = os.path.join(tmpdir, "video-unito.mp4")
-        merge_videos(input_paths, output_path)
+        merge_videos(input_paths, output_path,
+                     cover_image=cover_path, cover_duration=cover_duration)
     except MergeError as exc:
         shutil.rmtree(tmpdir, ignore_errors=True)
         return jsonify(error=str(exc)), 400

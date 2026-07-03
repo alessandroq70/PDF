@@ -124,39 +124,59 @@ def _try_fast_concat(infos: List[VideoInfo], output_path: str) -> bool:
         os.unlink(list_path)
 
 
-def _reencode_concat(infos: List[VideoInfo], output_path: str) -> None:
-    """Normalise every input to a common canvas and re-encode into one MP4."""
+def _reencode_concat(
+    infos: List[VideoInfo],
+    output_path: str,
+    cover_image: str = None,
+    cover_duration: float = 3.0,
+) -> None:
+    """Normalise every input to a common canvas and re-encode into one MP4.
+
+    If ``cover_image`` is given, a still image is shown at the start for
+    ``cover_duration`` seconds (with silent audio).
+    """
     canvas_w = _even(max(i.width for i in infos))
     canvas_h = _even(max(i.height for i in infos))
     target_fps = round(max(i.fps for i in infos)) or 30
 
     cmd: List[str] = [FFMPEG, "-y"]
+
+    # Ordered segments (cover first, if any); each tracks the ffmpeg input
+    # index that provides its video, and later its audio.
+    segments = []
+    input_index = 0
+
+    if cover_image:
+        cmd += ["-loop", "1", "-t", f"{cover_duration:.3f}", "-i", cover_image]
+        segments.append({"v": input_index, "has_audio": False, "duration": cover_duration})
+        input_index += 1
     for info in infos:
         cmd += ["-i", info.path]
+        segments.append({"v": input_index, "has_audio": info.has_audio, "duration": info.duration})
+        input_index += 1
 
-    # Add a finite silent-audio input for every clip that has no audio, so the
-    # concat filter always sees one audio stream per segment.
-    silent_input_index = {}
-    next_index = len(infos)
-    for idx, info in enumerate(infos):
-        if not info.has_audio:
-            dur = max(info.duration, 0.1)
+    # Add a finite silent-audio input for every segment that has no audio, so
+    # the concat filter always sees one audio stream per segment.
+    for seg in segments:
+        if seg["has_audio"]:
+            seg["a"] = seg["v"]
+        else:
+            dur = max(seg["duration"], 0.1)
             cmd += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i",
                     "anullsrc=channel_layout=stereo:sample_rate=44100"]
-            silent_input_index[idx] = next_index
-            next_index += 1
+            seg["a"] = input_index
+            input_index += 1
 
     filters = []
     concat_pads = []
-    for idx, info in enumerate(infos):
+    for idx, seg in enumerate(segments):
         filters.append(
-            f"[{idx}:v]scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
+            f"[{seg['v']}:v]scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
             f"pad={canvas_w}:{canvas_h}:-1:-1:color=black,setsar=1,"
             f"fps={target_fps},format=yuv420p[v{idx}]"
         )
-        audio_src = idx if info.has_audio else silent_input_index[idx]
         filters.append(
-            f"[{audio_src}:a]aformat=sample_rates=44100:channel_layouts=stereo[a{idx}]"
+            f"[{seg['a']}:a]aformat=sample_rates=44100:channel_layouts=stereo[a{idx}]"
         )
         concat_pads.append(f"[v{idx}][a{idx}]")
 
@@ -164,7 +184,7 @@ def _reencode_concat(infos: List[VideoInfo], output_path: str) -> None:
         ";".join(filters)
         + ";"
         + "".join(concat_pads)
-        + f"concat=n={len(infos)}:v=1:a=1[outv][outa]"
+        + f"concat=n={len(segments)}:v=1:a=1[outv][outa]"
     )
 
     cmd += [
@@ -182,16 +202,29 @@ def _reencode_concat(infos: List[VideoInfo], output_path: str) -> None:
         raise MergeError(f"FFmpeg non è riuscito a unire i video: {detail}")
 
 
-def merge_videos(input_paths: Sequence[str], output_path: str) -> str:
+def merge_videos(
+    input_paths: Sequence[str],
+    output_path: str,
+    cover_image: str = None,
+    cover_duration: float = 3.0,
+) -> str:
     """Merge two or more video files (in order) into ``output_path``.
 
-    Returns the output path. Raises :class:`MergeError` on any problem.
+    If ``cover_image`` (a path to an image) is given, it is shown at the start
+    for ``cover_duration`` seconds. Returns the output path. Raises
+    :class:`MergeError` on any problem.
     """
     paths = list(input_paths)
     if len(paths) < 2:
         raise MergeError("Sono necessari almeno 2 file video da unire.")
 
     infos = [_probe(p) for p in paths]
+
+    # A cover always requires re-encoding (the image must become video).
+    if cover_image:
+        _reencode_concat(infos, output_path, cover_image=cover_image,
+                         cover_duration=cover_duration)
+        return output_path
 
     if _try_fast_concat(infos, output_path):
         return output_path

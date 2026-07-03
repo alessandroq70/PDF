@@ -23,7 +23,9 @@ dispositivo.
 
 1. Apri il link, clicca sull'area tratteggiata (o trascina i video).
 2. Riordina i file con le frecce ▲ ▼ se necessario.
-3. Clicca **"Unisci e salva"** e scegli dove salvare il video unito.
+3. (Opzionale) Clicca **"Aggiungi copertina"** per mettere un'immagine (JPG/PNG)
+   all'inizio del video e imposta per quanti secondi mostrarla.
+4. Clicca **"Unisci e salva"** e scegli dove salvare il video unito.
    (Al primo utilizzo scarica ~30 MB del motore video: è normale.)
 
 ## Limiti (onesti)

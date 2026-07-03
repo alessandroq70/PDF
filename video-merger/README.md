@@ -11,6 +11,8 @@ Usa **FFmpeg** dietro le quinte, incluso automaticamente tramite il pacchetto
 
 - Selezione di **2 o più video** (clic o trascinamento).
 - **Riordino** dei file prima dell'unione (frecce su/giù).
+- **Copertina** opzionale: un'immagine (JPG/PNG) mostrata all'inizio del video
+  per una durata a scelta.
 - Rimozione dei singoli file e pulsante per svuotare l'elenco.
 - **Unione intelligente:**
   - se i video hanno **stesso formato/risoluzione** vengono uniti senza

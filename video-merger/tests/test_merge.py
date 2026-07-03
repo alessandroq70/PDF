@@ -52,6 +52,28 @@ def test_merge_different_resolutions_reencodes(tmp_path):
     assert info.has_audio  # silent track added for the audio-less clip
 
 
+def make_image(path, size="200x150"):
+    subprocess.run(
+        [FFMPEG, "-y", "-f", "lavfi", "-i", f"color=c=teal:s={size}",
+         "-frames:v", "1", "-loglevel", "error", path],
+        check=True,
+    )
+    return path
+
+
+def test_merge_with_cover_prepends_duration(tmp_path):
+    a = make_video(str(tmp_path / "a.mp4"), duration=2)
+    b = make_video(str(tmp_path / "b.mp4"), duration=2)
+    cover = make_image(str(tmp_path / "cover.jpg"))
+    out = str(tmp_path / "out.mp4")
+    merge_videos([a, b], out, cover_image=cover, cover_duration=3)
+
+    info = _probe(out)
+    # 3s cover + 2s + 2s = ~7s, canvas is the largest of cover/videos.
+    assert 6.5 < info.duration < 7.6
+    assert info.has_audio
+
+
 def test_single_file_raises(tmp_path):
     a = make_video(str(tmp_path / "a.mp4"))
     with pytest.raises(MergeError):
